@@ -153,11 +153,27 @@ int main(int argc, char **argv) {
             else if (!strcmp(argv[i+1], "lossless_input")) {
                 qt = LOSSLESS_INPUT;
             }
+            else if (!strcmp(argv[i+1], "random")) {
+                qt = RANDOM;
+            }
             else {
                 cout << "Unknown queue type " << argv[i+1] << endl;
                 exit_error(argv[0]);
             }
             cout << "queue_type "<< qt << endl;
+            i++;
+        } else if (!strcmp(argv[i],"-plr")) {
+            // independent per-packet loss rate for RANDOM queues (e.g. 0.01 = 1%),
+            // used to reproduce Chen's "packet stall probability" sweep rather than
+            // congestion-driven loss.
+            RandomQueue::set_static_plr(atof(argv[i+1]));
+            cout << "packet loss rate " << argv[i+1] << endl;
+            i++;
+        } else if (!strcmp(argv[i],"-tail_redundancy")) {
+            // basic tail-FEC showcase: duplicate each of the last N
+            // packets of every flow onto a second ECMP path (0 = off)
+            NdpSrc::setTailRedundancy(atoi(argv[i+1]));
+            cout << "tail redundancy (pkts) " << argv[i+1] << endl;
             i++;
         } else if (!strcmp(argv[i],"-host_queue_type")) {
             if (!strcmp(argv[i+1], "swift")) {

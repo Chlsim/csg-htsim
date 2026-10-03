@@ -17,11 +17,17 @@ public:
     RandomQueue(linkspeed_bps bitrate, mem_b maxsize, EventList &eventlist, QueueLogger* logger, mem_b drop);
     void receivePacket(Packet& pkt);
     void set_packet_loss_rate(double v);
+    // default independent per-packet loss rate for queues created after this is set
+    // (e.g. via -plr on the command line); lets every RandomQueue in the topology
+    // share one configured stall probability without threading it through every
+    // intermediate constructor call.
+    static void set_static_plr(double v) { _static_plr = v; }
     // should really be private, but loggers want to see
 private:
     mem_b _drop_th,_drop;
     int _buffer_drops;
     double _plr;
+    static double _static_plr;
 };
 
 #endif

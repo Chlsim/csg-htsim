@@ -49,6 +49,8 @@ RouteStrategy NdpSink::_route_strategy = NOT_SET;
 // _path_entropy_size is the number of paths we spray across.  If you don't set it, it will default to all paths.
 uint32_t NdpSrc::_path_entropy_size = 10000000;
 
+uint32_t NdpSrc::_tail_redundancy_pkts = 0;
+
 bool NdpSink::_oversubscribed_congestion_control = false;
 double NdpSink::_g = 1.0/16.0;
 
@@ -942,6 +944,21 @@ int NdpSrc::send_packet(NdpPull::seq_t pacer_no) {
                 last_packet = true;
             }
         }
+        // Tail-targeted proactive redundancy (basic showcase, see
+        // Chen's draft "Tail-Targeted Gentle Aggression"): a degenerate
+        // r=1-of-k repetition code rather than real XOR/MDS coding --
+        // the last _tail_redundancy_pkts packets of the flow are each
+        // sent twice, on two different ECMP paths. NDP's existing
+        // cumulative-ack logic (ndp.cpp, "must have been a bad
+        // retransmit" branch) already no-ops a duplicate seqno, so no
+        // receiver-side change is needed: whichever copy arrives first
+        // advances the cumulative ack, masking a loss of the other
+        // copy without waiting for a NACK/retransmit round trip.
+        bool send_tail_redundant = false;
+        const Route* redundant_route = NULL;
+        int redundant_pathid = -1; // only set explicitly for ECMP_FIB-style routing
+        NdpPacket::seq_t redundant_seqno = _highest_sent+1;
+
         switch (_route_strategy) {
         case SCATTER_PERMUTE:
         case SCATTER_RANDOM:
@@ -949,13 +966,20 @@ int NdpSrc::send_packet(NdpPull::seq_t pacer_no) {
         case SCATTER_ECMP:
         {
             assert(_paths.size() > 0);
-            const Route *rt = _paths.at(choose_route());
+            int crt = choose_route();
+            const Route *rt = _paths.at(crt);
             p = NdpPacket::newpkt(_flow, *rt, _highest_sent+1, pacer_no, _mss, false,
                                   _paths.size()>0?_paths.size():1, last_packet,_dstaddr);
-            
+
 #ifdef DEBUG_PATH_STATS
             _path_counts_new[p->path_id()]++;
 #endif
+            if (_tail_redundancy_pkts > 0 && _paths.size() > 1 &&
+                _flow_size > 0 &&
+                (_flow_size - (_highest_sent + _mss)) < (mem_b)_tail_redundancy_pkts * _mss) {
+                send_tail_redundant = true;
+                redundant_route = _paths.at((crt + 1) % _paths.size());
+            }
             break;
         }
         case ECMP_FIB:
@@ -972,6 +996,13 @@ int NdpSrc::send_packet(NdpPull::seq_t pacer_no) {
                     cout << eventlist().now() << " sending " << _path_ids[crt] << endl;
                 }
                 */
+                if (_tail_redundancy_pkts > 0 && _path_ids.size() > 1 &&
+                    _flow_size > 0 &&
+                    (_flow_size - (_highest_sent + _mss)) < (mem_b)_tail_redundancy_pkts * _mss) {
+                    send_tail_redundant = true;
+                    redundant_route = _route;
+                    redundant_pathid = _path_ids[(crt + 1) % _path_ids.size()];
+                }
                 break;
             }
         case SINGLE_PATH:
@@ -985,7 +1016,7 @@ int NdpSrc::send_packet(NdpPull::seq_t pacer_no) {
         assert(p);
         p->flow().logTraffic(*p,*this,TrafficLogger::PKT_CREATESEND);
         p->set_ts(eventlist().now());
-    
+
         _flight_size += _mss;
         /*
         if (_log_me) {
@@ -997,7 +1028,23 @@ int NdpSrc::send_packet(NdpPull::seq_t pacer_no) {
         _new_packets_sent++;
 
         PacketSink* sink = p->sendOn();
-        packets_sent++; 
+        packets_sent++;
+
+        if (send_tail_redundant) {
+            // Sent outside the congestion window / flight-size accounting
+            // on purpose -- proactive redundancy in Chen's design runs
+            // ahead of (not inside) the reliable ACK-clocked window.
+            NdpPacket *rp = NdpPacket::newpkt(_flow, *redundant_route, redundant_seqno, pacer_no,
+                                              _mss, false, _paths.size() > 0 ? _paths.size() : _path_ids.size(),
+                                              last_packet, _dstaddr);
+            if (redundant_pathid >= 0) {
+                rp->set_pathid((uint32_t)redundant_pathid);
+            }
+            rp->flow().logTraffic(*rp,*this,TrafficLogger::PKT_CREATESEND);
+            rp->set_ts(eventlist().now());
+            _redundant_packets_sent++;
+            rp->sendOn();
+        }
        HostQueue *q = dynamic_cast<HostQueue*>(sink);
         assert(q);
         //Figure out how long before the feeder queue sends this
@@ -1201,8 +1248,9 @@ void NdpSrc::print_stats() {
         total_rto += _path_counts_rto[i];
     }
     cout << "\n";
-    cout << "New: " << total_new << "  RTX: " << total_rtx << "  RTO " << total_rto << "\n";
-#endif    
+    cout << "New: " << total_new << "  RTX: " << total_rtx << "  RTO " << total_rto
+         << "  Redundant(tail): " << _redundant_packets_sent << "\n";
+#endif
 }
 
 ////////////////////////////////////////////////////////////////

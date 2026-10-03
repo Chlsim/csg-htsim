@@ -60,6 +60,10 @@ class NdpSrc : public PacketSink, public EventSource, public TriggerTarget {
     static void setMinRTO(uint32_t min_rto_in_us) {_min_rto = timeFromUs((uint32_t)min_rto_in_us);}
     static void setRouteStrategy(RouteStrategy strat) {_route_strategy = strat;}
     static void setPathEntropySize(uint32_t path_entropy_size) {_path_entropy_size = path_entropy_size;}
+    // Basic tail-FEC showcase: duplicate each of the last N packets of
+    // every flow onto a second ECMP path (see doNextEvent()/send loop
+    // in ndp.cpp). 0 = off (default).
+    static void setTailRedundancy(uint32_t n_packets) {_tail_redundancy_pkts = n_packets;}
     void set_flowsize(uint64_t flow_size_in_bytes) {
             _flow_size = flow_size_in_bytes;
     }
@@ -179,6 +183,8 @@ class NdpSrc : public PacketSink, public EventSource, public TriggerTarget {
     static simtime_picosec _min_rto;
     static RouteStrategy _route_strategy;
     static uint32_t _path_entropy_size; // now many paths do we include in our path set
+    static uint32_t _tail_redundancy_pkts; // basic tail-FEC showcase, see setTailRedundancy()
+    int _redundant_packets_sent = 0;
     static int _global_node_count;
     static int _rtt_hist[10000000];
     int _node_num;
