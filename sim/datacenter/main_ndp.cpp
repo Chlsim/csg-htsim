@@ -753,6 +753,11 @@ int main(int argc, char **argv) {
         bounce_pkts += ndp_srcs[ix]->_bounces_received;
     }
     cout << "New: " << new_pkts << " Rtx: " << rtx_pkts << " Bounced: " << bounce_pkts << endl;
+
+    cout << "--- per-path stats (New/Rtx/Rto packet counts per path, per flow) ---" << endl;
+    for (size_t ix = 0; ix < ndp_srcs.size(); ix++) {
+        ndp_srcs[ix]->print_stats();
+    }
     /*
     list <const Route*>::iterator rt_i;
     int counts[10]; int hop;
