@@ -26,12 +26,21 @@ RandomQueue::receivePacket(Packet& pkt)
     double drop_prob = 0;
     int crt = _queuesize + pkt.size();
 
-    if (_plr > 0.0 && drand() < _plr){
-        //if (_logger) _logger->logQueue(*this, QueueLogger::PKT_DROP, pkt);
-        //pkt.flow().logTraffic(pkt,*this,TrafficLogger::PKT_DROP);
-        cout << "Random Drop" << endl;
-        pkt.free();
-        return;
+    // NDP's retransmit logic in this build relies entirely on the explicit
+    // loss notification from trimming (header-only forwarding) -- RTO-based
+    // recovery is compiled out (see rtx_timer_hook() in ndp.cpp, gated on
+    // RESEND_ON_TIMEOUT, which is never defined). A silent full-packet drop
+    // here previously stalled flows forever: no NACK was ever sent, so
+    // nothing ever triggered a retransmit. Trim instead of dropping outright
+    // -- same behavior CompositeQueue uses -- so NDP's normal NACK/fast-
+    // retransmit path still fires for -plr-induced loss. Only trims packets
+    // that still carry a payload; an already-header-only control packet
+    // (ACK/NACK/PULL, or one trimmed upstream) is left alone.
+    if (_plr > 0.0 && !pkt.header_only() && drand() < _plr){
+        pkt.strip_payload();
+        pkt.flow().logTraffic(pkt,*this,TrafficLogger::PKT_TRIM);
+        if (_logger) _logger->logQueue(*this, QueueLogger::PKT_TRIM, pkt);
+        crt = _queuesize + pkt.size(); // re-check occupancy with the now-smaller trimmed size
     }
 
     if (crt > _drop_th)

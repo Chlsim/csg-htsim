@@ -7,4 +7,5 @@
 .DS_store
 logout.dat
 /sim/datacenter/htsim_*
-/sim/tests/htsim_*idmap.txt
+/sim/tests/htsim_*
+idmap.txt
